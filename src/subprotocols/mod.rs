@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
-mod bullet;
-mod zk;
+pub mod bullet;
+pub mod zk;
 
 pub mod dot_product;
 pub mod grand_product;
