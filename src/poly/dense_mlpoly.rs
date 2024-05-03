@@ -26,9 +26,9 @@ use rayon::prelude::*;
 
 #[derive(Debug, Clone)]
 pub struct DensePolynomial<F> {
-  num_vars: usize, // the number of variables in the multilinear polynomial
-  len: usize,
-  Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
+  pub num_vars: usize, // the number of variables in the multilinear polynomial
+  pub len: usize,
+  pub Z: Vec<F>, // evaluations of the polynomial in all the 2^num_vars Boolean inputs
 }
 
 pub struct PolyCommitmentGens<G> {
@@ -234,8 +234,12 @@ impl<F: PrimeField> DensePolynomial<F> {
     compute_dotproduct(&self.Z, &chis)
   }
 
-  fn vec(&self) -> &Vec<F> {
+  pub fn vec(&self) -> &Vec<F> {
     &self.Z
+  }
+  
+  pub fn vec_mut(&mut self) -> &mut Vec<F> {
+    &mut self.Z
   }
 
   pub fn extend(&mut self, other: &DensePolynomial<F>) {
