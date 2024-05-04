@@ -159,7 +159,7 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     comb_func: Func,
     combined_degree: usize,
     transcript: &mut T,
-  ) -> (Self, Vec<F>, Vec<F>, F)
+  ) -> (Self, Vec<F>, [F; ALPHA], F)
   where
     Func: Fn(&[F; ALPHA]) -> [F; BETA] + Sync,
     G: CurveGroup<ScalarField = F>,
@@ -170,8 +170,8 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       lc(&comb_func(ins), &gamma_pows)
     };
 
-    let (z, x, c) = Self::prove_arbitrary(&lc(_claim, &gamma_pows), num_rounds, polys, lin_comb_func, combined_degree, transcript);
-    (z, x, c, gamma)
+    let (proof, rand, evals) = Self::prove_arbitrary(&lc(_claim, &gamma_pows), num_rounds, polys, lin_comb_func, combined_degree, transcript);
+    (proof, rand, evals.try_into().unwrap(), gamma)
   }
   /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
   ///
