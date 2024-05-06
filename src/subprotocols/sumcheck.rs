@@ -148,9 +148,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     (SumcheckInstanceProof::new(cubic_polys), r, claims_prod)
   }
 
-
-
-
   #[tracing::instrument(skip_all, name = "Sumcheck.prove")]
   pub fn prove_arbitrary_vec<Func, G, T: ProofTranscript<G>, const ALPHA: usize, const BETA: usize>(
     _claim: &[F; BETA],
@@ -170,8 +167,13 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
       lc(&comb_func(ins), &gamma_pows)
     };
 
-    let (z, x, c) = Self::prove_arbitrary(&lc(_claim, &gamma_pows), num_rounds, polys, lin_comb_func, combined_degree, transcript);
-    (z, x, c, gamma)
+    let (proof, point, evals) = Self::prove_arbitrary(&lc(_claim, &gamma_pows), num_rounds, polys, lin_comb_func, combined_degree, transcript);
+    
+    transcript.append_scalars(
+      b"sumcheck_final_evals",
+      &evals,
+    );
+    (proof, point, evals, gamma)
   }
   /// Create a sumcheck proof for polynomial(s) of arbitrary degree.
   ///
