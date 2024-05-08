@@ -321,7 +321,6 @@ impl<F: PrimeField> SumcheckInstanceProof<F> {
     };
 
     let (proof, point, evals) = Self::prove_arbitrary(&lc(_claim, &gamma_pows), num_rounds, polys, lin_comb_func, combined_degree, transcript);
-    
     transcript.append_scalars(
       b"sumcheck_final_evals",
       &evals,
@@ -675,6 +674,89 @@ impl<G: CurveGroup> ZKSumcheckInstanceProof<G> {
   }
 }
 
+
+pub struct VecSumcheckInstanceProof<F: PrimeField> {
+  inner_proof: SumcheckInstanceProof<F>,
+  evals: Vec<F>,
+}
+
+impl<F: PrimeField> VecSumcheckInstanceProof<F> {
+  pub fn new(inner_proof: SumcheckInstanceProof<F>, evals: Vec<F>) -> Self {
+    VecSumcheckInstanceProof {
+      inner_proof,
+      evals,
+    }
+  }
+
+  #[tracing::instrument(skip_all, name = "VecSumcheck.prove")]
+  pub fn prove_arbitrary_dyn<Func, G, T: ProofTranscript<G>>(
+    _claim: &Vec<F>,
+    num_rounds: usize,
+    polys: &mut Vec<DensePolynomial<F>>,
+    comb_func: Func,
+    combined_degree: usize,
+    transcript: &mut T,
+  ) -> (Self, Vec<F>)
+  where
+    Func: Fn(&Vec<F>) -> Vec<F> + Sync,
+    G: CurveGroup<ScalarField = F>,
+  {
+    let gamma = transcript.challenge_scalar(b"challenge_combine_outputs");
+    let gamma_pows = make_pows(gamma, _claim.len());
+    let lin_comb_func = |ins: &Vec<F>| {
+      lc(&comb_func(ins), &gamma_pows)
+    };
+
+    let (inner_proof, point, evals) = SumcheckInstanceProof::prove_arbitrary_dyn(&lc(_claim, &gamma_pows), num_rounds, polys, lin_comb_func, combined_degree, transcript);
+
+    transcript.append_scalars(
+      b"sumcheck_final_evals",
+      &evals,
+    );
+    (
+      VecSumcheckInstanceProof{
+        inner_proof,
+        evals: comb_func(&evals),
+      },
+      point,
+    )
+  }
+
+  pub fn evals(&self) -> &Vec<F> {
+    &self.evals
+  }
+
+  pub fn verify<G, T: ProofTranscript<G>, Func>(
+    &self,
+    claim: &Vec<F>,
+    num_rounds: usize,
+    degree_bound: usize,
+    comb_func: Func,
+    transcript: &mut T,
+  ) -> Result<Vec<F>, ProofVerifyError>
+  where
+    Func: Fn(&Vec<F>) -> Vec<F> + Sync,
+    G: CurveGroup<ScalarField = F>,
+  {
+    let gamma = transcript.challenge_scalar(b"challenge_combine_outputs");
+    let gamma_pows = make_pows(gamma, claim.len());
+    let combined_claim = lc(claim, &gamma_pows);
+    
+    let (eval, point) = self.inner_proof.verify(combined_claim, num_rounds, degree_bound, transcript)?;
+    
+    transcript.append_scalars(
+      b"sumcheck_final_evals",
+      &self.evals,
+    );
+
+    let expected_eval = lc(self.evals.as_slice(), &gamma_pows);
+    assert_eq!(eval, expected_eval);
+    
+    Ok(point)
+  }
+
+}
+
 #[cfg(test)]
 mod test {
   use super::*;
@@ -875,5 +957,79 @@ mod test {
 
     let oracle_query = comb_func_prod(&vec![a, b, c]);
     assert_eq!(verify_evaluation, lc(&oracle_query, &make_pows(gamma, 4)));
+  }
+
+  #[test]
+  fn test_vec_sumcheck() {
+    let num_vars = 3;
+    let num_evals = num_vars.pow2();
+    let mut evals: Vec<Fr> = Vec::with_capacity(num_evals);
+    for i in 0..num_evals {
+      evals.push(Fr::from(8 + i as u64));
+    }
+
+    let A: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+    let B: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+    let C: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
+
+    let comb_func_prod =
+      |polys: &Vec<Fr>| -> Vec<Fr> { vec![polys[0] * polys[1], polys[1] * polys[2], polys[2] * polys[0], polys[1]] };
+
+    let mut claims = vec![Fr::zero(); 4];
+    for i in 0..num_evals {
+      use crate::utils::index_to_field_bitvector;
+
+      let part = comb_func_prod(
+        &vec![
+          A.evaluate(&index_to_field_bitvector(i, num_vars)),
+          B.evaluate(&index_to_field_bitvector(i, num_vars)),
+          C.evaluate(&index_to_field_bitvector(i, num_vars)),
+        ],
+      );
+      for j in 0..4 {
+        claims[j] += part[j];
+      }
+    }
+    let mut polys = vec![A.clone(), B.clone(), C.clone()];
+
+    let mut r = vec![]; // point 0,0,0 within the boolean hypercube
+    for _i in 0..4 {
+      r.push(Fr::from(rand::random::<u64>()));
+    }
+
+    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    
+    let (proof, prove_randomness) =
+      VecSumcheckInstanceProof::<Fr>::prove_arbitrary_dyn::<_, G1Projective, _>(
+        &claims,
+        num_vars,
+        &mut polys,
+        comb_func_prod,
+        3,
+        &mut transcript,
+      );
+
+    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let verify_result = proof.verify::<G1Projective, _, _>(
+      &claims, 
+      num_vars, 
+      3,
+      comb_func_prod,
+      &mut transcript
+    );
+    assert!(verify_result.is_ok());
+
+    let verify_randomness = verify_result.unwrap();
+    assert_eq!(prove_randomness, verify_randomness);
+    assert_eq!(prove_randomness, r[1..4]);
+
+    // Consider this the opening proof to a(r) * b(r) * c(r)
+    let a = A.evaluate(prove_randomness.as_slice());
+    let b = B.evaluate(prove_randomness.as_slice());
+    let c = C.evaluate(prove_randomness.as_slice());
+
+    let oracle_query = comb_func_prod(&vec![a, b, c]);
+    assert_eq!(*proof.evals(), oracle_query);
+
   }
 }
