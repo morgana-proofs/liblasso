@@ -761,7 +761,7 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
 mod test {
   use super::*;
   use crate::utils::math::Math;
-  use crate::utils::test::TestTranscript;
+  use crate::utils::test_lib::TestTranscript;
   use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
   use ark_ff::Zero;
 

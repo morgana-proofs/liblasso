@@ -8,6 +8,7 @@ use rayon::prelude::*;
 #[cfg(test)]
 pub mod test;
 
+pub mod test_lib;
 pub mod errors;
 pub mod gaussian_elimination;
 pub mod math;
