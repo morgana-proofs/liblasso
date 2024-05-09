@@ -619,14 +619,16 @@ impl<F: PrimeField> SumcheckRichProof<F> {
   /// Returns (e, r)
   /// - `e`: Claimed evaluation at random point
   /// - `r`: Evaluation point
-  pub fn verify<G, T: ProofTranscript<G>>(
+  pub fn verify<G, T: ProofTranscript<G>, Func>(
     &self,
     claim: F,
     num_rounds: usize,
     degree_bound: usize,
+    comb_func: Func,
     transcript: &mut T,
   ) -> Result<(F, Vec<F>), ProofVerifyError>
   where
+    Func: Fn(&Vec<F>) -> F + Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let mut e = claim;
@@ -664,7 +666,7 @@ impl<F: PrimeField> SumcheckRichProof<F> {
       b"sumcheck_final_evals",
       &self.final_evals,
     );
-
+    assert_eq!(e, comb_func(&self.final_evals));
     Ok((e, r))
   }
 }
@@ -716,21 +718,26 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
     )
   }
 
-  pub fn verify<G, T: ProofTranscript<G>>(
+  pub fn verify<G, T: ProofTranscript<G>, Func>(
     &self,
     claim: &Vec<F>,
     num_rounds: usize,
     degree_bound: usize,
+    comb_func: Func,
     transcript: &mut T,
   ) -> Result<Vec<F>, ProofVerifyError>
   where
+  Func: Fn(&Vec<F>) -> Vec<F> + Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let gamma = transcript.challenge_scalar(b"challenge_combine_outputs");
     let gamma_pows = make_pows(gamma, claim.len());
     let combined_claim = lc(claim, &gamma_pows);
-    
-    let (_, point) = self.inner_proof.verify(combined_claim, num_rounds, degree_bound, transcript)?;
+    let lin_comb_func = |ins: &Vec<F>| {
+      lc(&comb_func(ins), &gamma_pows)
+    };
+
+    let (_, point) = self.inner_proof.verify(combined_claim, num_rounds, degree_bound, lin_comb_func, transcript)?;
     
     Ok(point)
   }
@@ -854,7 +861,7 @@ use ark_ff::Zero;
       );
 
     let mut transcript: TestTranscript<Fr> = TestTranscript::as_this(&transcript);
-    let verify_result = proof.verify::<G1Projective, _>(claim, num_vars, 3, &mut transcript);
+    let verify_result = proof.verify::<G1Projective, _, _>(claim, num_vars, 3, comb_func_prod, &mut transcript);
     assert!(verify_result.is_ok());
 
     let (verify_evaluation, verify_randomness) = verify_result.unwrap();
@@ -923,10 +930,11 @@ use ark_ff::Zero;
       );
 
     let mut transcript: TestTranscript<Fr> = TestTranscript::as_this(&transcript);
-    let verify_result = proof.verify::<G1Projective, _>(
+    let verify_result = proof.verify::<G1Projective, _, _>(
       &claims, 
       num_vars, 
       3,
+      comb_func_prod,
       &mut transcript
     );
     assert!(verify_result.is_ok());
