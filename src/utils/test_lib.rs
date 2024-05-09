@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
@@ -30,9 +32,36 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
     }
     all_indices
   }
-  
+
+  #[derive(Debug, PartialEq, Eq, Clone)]
+  pub enum TranscriptRow {
+    ChallengeVector(&'static [u8], usize),
+    ChallengeScalar(&'static [u8]),
+    AppendedMessage(&'static [u8], &'static [u8]),
+    AppendedU64(&'static [u8], u64),
+  }
+
+  pub enum TranscriptLog {
+    Write(Vec<TranscriptRow>),
+    Read(Vec<TranscriptRow>, usize)
+  }
+
+  impl TranscriptLog {
+    pub fn append(&mut self, row: TranscriptRow) {
+      match self {
+        TranscriptLog::Write(rows) => rows.push(row),
+        TranscriptLog::Read(rows, idx) => {
+          assert_eq!(rows[*idx], row);
+          *idx += 1;
+        },
+      }
+    }
+  }
+
+
   /// Wrapper around merlin_transcript that allows overriding
-  pub struct TestTranscript<F> {
+  pub struct TestTranscript<F: Debug + Eq> {
+    pub label: &'static [u8],
     pub merlin_transcript: Transcript,
   
     pub scalars: Vec<F>,
@@ -40,17 +69,46 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
   
     pub vecs: Vec<Vec<F>>,
     pub vec_index: usize,
+
+    pub log: TranscriptLog,
   }
   
   impl<F: PrimeField> TestTranscript<F> {
     pub fn new(scalar_responses: Vec<F>, vec_responses: Vec<Vec<F>>) -> Self {
+      let label = b"transcript";
       Self {
-        merlin_transcript: Transcript::new(b"transcript"),
+        label,
+        merlin_transcript: Transcript::new(label),
         scalars: scalar_responses,
         scalar_index: 0,
         vecs: vec_responses,
         vec_index: 0,
+        log: TranscriptLog::Write(vec![]),
       }
+    }
+
+    pub fn as_this(other: &Self) -> Self {
+      let Self {label, merlin_transcript, scalars, scalar_index, vecs, vec_index, log} = other;
+
+      let log_records = match log {
+        TranscriptLog::Write(data) => data,
+        TranscriptLog::Read(data, _) => data,
+      };
+
+      Self {
+        label: label,
+        merlin_transcript: Transcript::new(label),
+        scalars: scalars.clone(),
+        scalar_index: 0,
+        vecs: vecs.clone(),
+        vec_index: 0,
+        log: TranscriptLog::Read(log_records.clone(), 0),
+      }
+    }
+
+    pub fn assert_end(&self) {
+      let TranscriptLog::Read(data, idx) = &self.log else {return;};
+      assert_eq!(data.len(), *idx, "Transcript length does not match");
     }
   }
   
@@ -60,6 +118,8 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
   
       let res = self.scalars[self.scalar_index];
       self.scalar_index += 1;
+
+      self.log.append(TranscriptRow::ChallengeScalar(_label));
       res
     }
   
@@ -71,6 +131,8 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
       assert_eq!(res.len(), len);
   
       self.vec_index += 1;
+
+      self.log.append(TranscriptRow::ChallengeVector(_label, len));
       res
     }
   
@@ -78,10 +140,12 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
   
     fn append_message(&mut self, label: &'static [u8], msg: &'static [u8]) {
       self.merlin_transcript.append_message(label, msg);
+      self.log.append(TranscriptRow::AppendedMessage(label, msg));
     }
   
     fn append_u64(&mut self, label: &'static [u8], x: u64) {
       self.merlin_transcript.append_u64(label, x);
+      self.log.append(TranscriptRow::AppendedU64(label, x));
     }
   
     fn append_protocol_name(&mut self, protocol_name: &'static [u8]) {
