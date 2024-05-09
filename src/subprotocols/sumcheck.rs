@@ -596,11 +596,11 @@ impl<F: PrimeField> SumcheckRichProof<F> {
       compressed_polys.push(round_uni_poly.compress());
     }
 
-    let final_evals: Vec<F> = polys.iter().take(claims_num).map(|poly| poly[0]).collect();
+    let final_evals: Vec<F> = polys.iter().map(|poly| poly[0]).collect();
 
     transcript.append_scalars(
       b"sumcheck_final_evals",
-      &final_evals,
+      &final_evals[0..claims_num],
     );
     
     (SumcheckRichProof::new(compressed_polys, final_evals), r)
@@ -670,7 +670,7 @@ impl<F: PrimeField> SumcheckRichProof<F> {
 }
 
 pub struct VecSumcheckInstanceProof<F: PrimeField> {
-  inner_proof: SumcheckRichProof<F>,
+  pub inner_proof: SumcheckRichProof<F>,
 }
 
 impl<F: PrimeField> VecSumcheckInstanceProof<F> {
@@ -681,7 +681,7 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
   }
 
   #[tracing::instrument(skip_all, name = "VecSumcheck.prove")]
-  pub fn prove_arbitrary_dyn<Func, G, T: ProofTranscript<G>>(
+  pub fn prove<Func, G, T: ProofTranscript<G>>(
     _claim: &Vec<F>,
     num_rounds: usize,
     known_polys: &mut Vec<DensePolynomial<F>>,
@@ -912,7 +912,7 @@ use ark_ff::Zero;
     let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
     
     let (proof, prove_randomness) =
-      VecSumcheckInstanceProof::<Fr>::prove_arbitrary_dyn::<_, G1Projective, _>(
+      VecSumcheckInstanceProof::<Fr>::prove::<_, G1Projective, _>(
         &claims,
         num_vars,
         &mut vec![],
