@@ -491,8 +491,8 @@ impl<F: PrimeField> SumcheckRichProof<F> {
   pub fn prove<Func, G, T: ProofTranscript<G>>(
     _claim: &F,
     num_rounds: usize,
-    known_polys: &mut Vec<DensePolynomial<F>>,
     claim_polys: &mut Vec<DensePolynomial<F>>,
+    known_polys: &mut Vec<DensePolynomial<F>>,
     comb_func: Func,
     combined_degree: usize,
     transcript: &mut T,
@@ -624,6 +624,7 @@ impl<F: PrimeField> SumcheckRichProof<F> {
     claim: F,
     num_rounds: usize,
     degree_bound: usize,
+    known_polys: &[&dyn Fn(&[F]) -> F],
     comb_func: Func,
     transcript: &mut T,
   ) -> Result<(F, Vec<F>), ProofVerifyError>
@@ -662,10 +663,15 @@ impl<F: PrimeField> SumcheckRichProof<F> {
       e = poly.evaluate(&r_i);
     }
 
+    let claimed_polys_num = self.final_evals.len() - known_polys.len();
     transcript.append_scalars(
       b"sumcheck_final_evals",
-      &self.final_evals,
+      &self.final_evals[..claimed_polys_num],
     );
+
+    for (poly, promised_eval) in known_polys.iter().zip_eq(self.final_evals[claimed_polys_num..].iter()) {
+      assert_eq!(poly(&r), *promised_eval);
+    }
     assert_eq!(e, comb_func(&self.final_evals));
     Ok((e, r))
   }
@@ -684,10 +690,10 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
 
   #[tracing::instrument(skip_all, name = "VecSumcheck.prove")]
   pub fn prove<Func, G, T: ProofTranscript<G>>(
-    _claim: &Vec<F>,
+    claim: &Vec<F>,
     num_rounds: usize,
-    known_polys: &mut Vec<DensePolynomial<F>>,
     claimed_polys: &mut Vec<DensePolynomial<F>>,
+    known_polys: &mut Vec<DensePolynomial<F>>,
     comb_func: Func,
     combined_degree: usize,
     transcript: &mut T,
@@ -697,21 +703,21 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
     G: CurveGroup<ScalarField = F>,
   {
     let gamma = transcript.challenge_scalar(b"challenge_combine_outputs");
-    let gamma_pows = make_pows(gamma, _claim.len());
+    let gamma_pows = make_pows(gamma, claim.len());
+    let combined_claim = lc(claim, &gamma_pows);
     let lin_comb_func = |ins: &Vec<F>| {
       lc(&comb_func(ins), &gamma_pows)
     };
 
     let (inner_proof, point) = SumcheckRichProof::prove(
-      &lc(_claim, &gamma_pows),
+      &combined_claim,
       num_rounds,
-      known_polys,
       claimed_polys, 
+      known_polys,
       lin_comb_func, 
       combined_degree, 
       transcript
     );
-
     (
       VecSumcheckInstanceProof::new(inner_proof),
       point,
@@ -720,9 +726,10 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
 
   pub fn verify<G, T: ProofTranscript<G>, Func>(
     &self,
-    claim: &Vec<F>,
+    claim: &[F],
     num_rounds: usize,
     degree_bound: usize,
+    known_polys: &[&dyn Fn(&[F]) -> F],
     comb_func: Func,
     transcript: &mut T,
   ) -> Result<Vec<F>, ProofVerifyError>
@@ -737,7 +744,14 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
       lc(&comb_func(ins), &gamma_pows)
     };
 
-    let (_, point) = self.inner_proof.verify(combined_claim, num_rounds, degree_bound, lin_comb_func, transcript)?;
+    let (_, point) = self.inner_proof.verify(
+      combined_claim, 
+      num_rounds, 
+      degree_bound, 
+      known_polys, 
+      lin_comb_func, 
+      transcript,
+    )?;
     
     Ok(point)
   }
@@ -747,7 +761,7 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
 #[cfg(test)]
 mod test {
   use super::*;
-  use crate::utils::math::Math;
+  use crate::{poly::eq_poly::EqPolynomial, utils::math::Math};
   use crate::utils::test_lib::TestTranscript;
   use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
   use ark_ec::bls12::G1Prepared;
@@ -824,58 +838,70 @@ use ark_ff::Zero;
     let B: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
     let C: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
 
+    let some_point = vec![Fr::from(0), Fr::from(1), Fr::from(0)];
+    let known_poly = EqPolynomial::new(some_point);
+
     let comb_func_prod =
-      |polys: &Vec<Fr>| -> Fr { polys[0] * polys[1] * polys[2] };
+      |polys: &Vec<Fr>| -> Fr { polys[0] * polys[1] * polys[2] * polys[3] };
 
     let mut claim = Fr::zero();
     for i in 0..num_evals {
       use crate::utils::index_to_field_bitvector;
 
-      let part = comb_func_prod(
+      claim += comb_func_prod(
         &vec![
           A.evaluate(&index_to_field_bitvector(i, num_vars)),
           B.evaluate(&index_to_field_bitvector(i, num_vars)),
           C.evaluate(&index_to_field_bitvector(i, num_vars)),
+          known_poly.evaluate(&index_to_field_bitvector(i, num_vars)),
         ],
       );
-      claim += part;
     }
     let mut polys = vec![A.clone(), B.clone(), C.clone()];
 
-    let mut r = vec![]; // point 0,0,0 within the boolean hypercube
-    for _i in 0..3 {
-      r.push(Fr::from(rand::random::<u64>()));
-    }
+    let mut known_polys_tables = vec![DensePolynomial::new(known_poly.evals())];
+    let known_poly_evaluator = |x: &[Fr]| known_poly.evaluate(x);
+    let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
 
-    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let mut p_transcript = Transcript::new(b"test-transcript");
     
     let (proof, prove_randomness) =
       SumcheckRichProof::<Fr>::prove::<_, G1Projective, _>(
         &claim,
         num_vars,
         &mut polys,
-        &mut vec![],
+        &mut known_polys_tables,
         comb_func_prod,
-        3,
-        &mut transcript,
+        4,
+        &mut p_transcript,
       );
 
-    let mut transcript: TestTranscript<Fr> = TestTranscript::as_this(&transcript);
-    let verify_result = proof.verify::<G1Projective, _, _>(claim, num_vars, 3, comb_func_prod, &mut transcript);
+    let mut v_transcript = Transcript::new(b"test-transcript");
+    let verify_result = proof.verify::<G1Projective, _, _>(
+      claim,   
+      num_vars, 
+      4, 
+      &verifier_evaluators, 
+      comb_func_prod, 
+      &mut v_transcript,
+    );
     assert!(verify_result.is_ok());
 
     let (verify_evaluation, verify_randomness) = verify_result.unwrap();
     assert_eq!(prove_randomness, verify_randomness);
-    assert_eq!(prove_randomness, r[0..3]);
 
     // Consider this the opening proof to a(r) * b(r) * c(r)
     let a = A.evaluate(prove_randomness.as_slice());
     let b = B.evaluate(prove_randomness.as_slice());
     let c = C.evaluate(prove_randomness.as_slice());
+    let eq = known_poly.evaluate(prove_randomness.as_slice());
 
-    let oracle_query = comb_func_prod(&vec![a, b, c]);
+    let oracle_query = comb_func_prod(&vec![a, b, c, eq]);
     assert_eq!(verify_evaluation, oracle_query);
-    transcript.assert_end();
+    assert_eq!(
+      <Transcript as ProofTranscript<G1Projective>>::challenge_scalar(&mut p_transcript, b"end"),
+      <Transcript as ProofTranscript<G1Projective>>::challenge_scalar(&mut v_transcript, b"end"),
+    )
   }
 
   #[test]
@@ -892,9 +918,17 @@ use ark_ff::Zero;
     let C: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
 
     let comb_func_prod =
-      |polys: &Vec<Fr>| -> Vec<Fr> { vec![polys[0] * polys[1], polys[1] * polys[2], polys[2] * polys[0], polys[1]] };
-
-    let mut claims = vec![Fr::zero(); 4];
+      |polys: &Vec<Fr>| -> Vec<Fr> { vec![
+        polys[0] * polys[1],
+        polys[1] * polys[2], 
+        polys[2] * polys[0], 
+        polys[1] * polys[3], 
+        polys[0] * polys[3]
+      ] };
+    let some_point = vec![Fr::from(0), Fr::from(1), Fr::from(0)];
+    let known_poly = EqPolynomial::new(some_point);
+    
+    let mut claims = vec![Fr::zero(); 5];
     for i in 0..num_evals {
       use crate::utils::index_to_field_bitvector;
 
@@ -903,52 +937,56 @@ use ark_ff::Zero;
           A.evaluate(&index_to_field_bitvector(i, num_vars)),
           B.evaluate(&index_to_field_bitvector(i, num_vars)),
           C.evaluate(&index_to_field_bitvector(i, num_vars)),
+          known_poly.evaluate(&index_to_field_bitvector(i, num_vars)),
         ],
       );
-      for j in 0..4 {
+      for j in 0..5 {
         claims[j] += part[j];
       }
     }
     let mut polys = vec![A.clone(), B.clone(), C.clone()];
+    let mut known_polys_tables = vec![DensePolynomial::new(known_poly.evals())];
+    let known_poly_evaluator = |x: &[Fr]| known_poly.evaluate(x);
+    let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
 
-    let mut r = vec![]; // point 0,0,0 within the boolean hypercube
-    for _i in 0..4 {
-      r.push(Fr::from(rand::random::<u64>()));
-    }
+    let mut p_transcript = Transcript::new(b"test-transcript");
+    // let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let (proof, prove_randomness) = VecSumcheckInstanceProof::<Fr>::prove::<_, G1Projective, _>(
+      &claims,
+      num_vars,
+      &mut polys,
+      &mut known_polys_tables,
+      comb_func_prod,
+      9,
+      &mut p_transcript,
+    );
 
-    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
-    
-    let (proof, prove_randomness) =
-      VecSumcheckInstanceProof::<Fr>::prove::<_, G1Projective, _>(
-        &claims,
-        num_vars,
-        &mut vec![],
-        &mut polys,
-        comb_func_prod,
-        3,
-        &mut transcript,
-      );
-
-    let mut transcript: TestTranscript<Fr> = TestTranscript::as_this(&transcript);
+    let mut v_transcript = Transcript::new(b"test-transcript");
+    // let mut transcript: TestTranscript<Fr> = TestTranscript::as_this(&transcript);
     let verify_result = proof.verify::<G1Projective, _, _>(
       &claims, 
       num_vars, 
-      3,
+      9,
+      verifier_evaluators.as_slice(),
       comb_func_prod,
-      &mut transcript
+      &mut v_transcript
     );
     assert!(verify_result.is_ok());
 
     let verify_randomness = verify_result.unwrap();
     assert_eq!(prove_randomness, verify_randomness);
-    assert_eq!(prove_randomness, r[1..4]);
 
     // Consider this the opening proof to a(r) * b(r) * c(r)
     let a = A.evaluate(prove_randomness.as_slice());
     let b = B.evaluate(prove_randomness.as_slice());
     let c = C.evaluate(prove_randomness.as_slice());
+    let eq = known_poly.evaluate(prove_randomness.as_slice());
 
-    let oracle_query = comb_func_prod(&vec![a, b, c]);
-    transcript.assert_end();
+    let oracle_query: Vec<ark_ff::Fp<ark_ff::MontBackend<ark_curve25519::FrConfig, 4>, 4>> = comb_func_prod(&vec![a, b, c, eq]);
+
+    assert_eq!(
+      <Transcript as ProofTranscript<G1Projective>>::challenge_scalar(&mut p_transcript, b"end"),
+      <Transcript as ProofTranscript<G1Projective>>::challenge_scalar(&mut v_transcript, b"end"),
+    )
   }
 }
