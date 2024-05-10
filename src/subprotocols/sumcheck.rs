@@ -501,6 +501,9 @@ impl<F: PrimeField> SumcheckRichProof<F> {
     Func: Fn(&Vec<F>) -> F + Sync,
     G: CurveGroup<ScalarField = F>,
   {
+
+    assert!(num_rounds == claim_polys[0].num_vars, "Partial sumchecks currently unsupported.");
+
     let mut r: Vec<F> = Vec::new();
     let mut compressed_polys: Vec<CompressedUniPoly<F>> = Vec::new();
     let claims_num = claim_polys.len();
@@ -577,6 +580,10 @@ impl<F: PrimeField> SumcheckRichProof<F> {
           *eval_point += mle[poly_i];
         }
       }
+      
+      if _round == 0 {
+        assert!(eval_points[0] + eval_points[1] == *_claim, "Prover failure, {:?} claim incorrect", _claim);
+      }
 
       let round_uni_poly = UniPoly::from_evals(&eval_points);
 
@@ -603,6 +610,8 @@ impl<F: PrimeField> SumcheckRichProof<F> {
       &final_evals[0..claims_num],
     );
     
+//    println!("r = {:?}, e = {:?}, final_evals = {:?}", r, TEST_E.unwrap(), final_evals);
+
     (SumcheckRichProof::new(compressed_polys, final_evals), r)
   }
 
@@ -672,6 +681,9 @@ impl<F: PrimeField> SumcheckRichProof<F> {
     for (poly, promised_eval) in known_polys.iter().zip_eq(self.final_evals[claimed_polys_num..].iter()) {
       assert_eq!(poly(&r), *promised_eval);
     }
+
+  //  println!("r = {:?}, e = {:?}, final_evals = {:?}", r, e, self.final_evals);
+
     assert_eq!(e, comb_func(&self.final_evals));
     Ok((e, r))
   }
