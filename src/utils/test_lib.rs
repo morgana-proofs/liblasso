@@ -41,10 +41,12 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
     AppendedU64(&'static [u8], u64),
   }
 
+  #[derive(Debug, PartialEq, Eq, Clone)]
   pub enum TranscriptLog {
     Write(Vec<TranscriptRow>),
     Read(Vec<TranscriptRow>, usize)
   }
+
 
   impl TranscriptLog {
     pub fn append(&mut self, row: TranscriptRow) {
