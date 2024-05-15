@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
-use ark_std::test_rng;
+use ark_std::{iterable::Iterable, test_rng};
 use merlin::Transcript;
 use rand_chacha::rand_core::RngCore;
 
@@ -33,12 +33,25 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
     all_indices
   }
 
-  #[derive(Debug, PartialEq, Eq, Clone)]
+  #[derive(PartialEq, Eq, Clone)]
   pub enum TranscriptRow {
     ChallengeVector(&'static [u8], usize),
     ChallengeScalar(&'static [u8]),
     AppendedMessage(&'static [u8], &'static [u8]),
     AppendedU64(&'static [u8], u64),
+    AppendedGeneric(&'static [u8], Vec<u8>),
+  }
+
+  impl Debug for TranscriptRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ChallengeVector(arg0, arg1) => f.debug_tuple("ChallengeVector").field(&arg0.iter().map(|&c| char::from(c)).collect::<String>()).field(arg1).finish(),
+            Self::ChallengeScalar(arg0) => f.debug_tuple("ChallengeScalar").field(&arg0.iter().map(|&c| char::from(c)).collect::<String>()).finish(),
+            Self::AppendedMessage(arg0, arg1) => f.debug_tuple("AppendedMessage").field(&arg0.iter().map(|&c| char::from(c)).collect::<String>()).field(&arg1.iter().map(|&c| char::from(c)).collect::<String>()).finish(),
+            Self::AppendedU64(arg0, arg1) => f.debug_tuple("AppendedU64").field(&arg0.iter().map(|&c| char::from(c)).collect::<String>()).field(arg1).finish(),
+            Self::AppendedGeneric(arg0, arg1) => f.debug_tuple("AppendGeneric").field(&arg0.iter().map(|&c| char::from(c)).collect::<String>()).field(arg1).finish(),
+        }
+    }
   }
 
   #[derive(Debug, PartialEq, Eq, Clone)]
@@ -87,6 +100,11 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
         vec_index: 0,
         log: TranscriptLog::Write(vec![]),
       }
+    }
+
+    fn _append_message(&mut self, label: &'static [u8], msg: Vec<u8>) {
+      self.merlin_transcript.append_message(label, &msg);
+      self.log.append(TranscriptRow::AppendedGeneric(label, msg));
     }
 
     pub fn as_this(other: &Self) -> Self {
@@ -151,45 +169,35 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
     }
   
     fn append_protocol_name(&mut self, protocol_name: &'static [u8]) {
-      self
-        .merlin_transcript
-        .append_message(b"protocol-name", protocol_name);
+      self._append_message(b"protocol-name", protocol_name.to_vec());
     }
   
     fn append_scalar(&mut self, label: &'static [u8], scalar: &G::ScalarField) {
       let mut buf = vec![];
       scalar.serialize_compressed(&mut buf).unwrap();
-      self.merlin_transcript.append_message(label, &buf);
+      self._append_message(label, buf);
     }
   
     fn append_scalars(&mut self, label: &'static [u8], scalars: &[G::ScalarField]) {
-      self
-        .merlin_transcript
-        .append_message(label, b"begin_append_vector");
+      <Self as ProofTranscript<G>>::append_message(self, label, b"begin_append_vector");
       for item in scalars.iter() {
         <Self as ProofTranscript<G>>::append_scalar(self, label, item);
       }
-      self
-        .merlin_transcript
-        .append_message(label, b"end_append_vector");
+      <Self as ProofTranscript<G>>::append_message(self, label, b"end_append_vector");
     }
   
     fn append_point(&mut self, label: &'static [u8], point: &G) {
       let mut buf = vec![];
       point.serialize_compressed(&mut buf).unwrap();
-      self.merlin_transcript.append_message(label, &buf);
+      self._append_message(label, buf);
     }
   
     fn append_points(&mut self, label: &'static [u8], points: &[G]) {
-      self
-        .merlin_transcript
-        .append_message(label, b"begin_append_vector");
+      <Self as ProofTranscript<G>>::append_message(self, label, b"begin_append_vector");
       for item in points.iter() {
-        self.merlin_transcript.append_point(label, item);
+        self.append_point(label, item);
       }
-      self
-        .merlin_transcript
-        .append_message(label, b"end_append_vector");
+      <Self as ProofTranscript<G>>::append_message(self, label, b"end_append_vector");
     }
   }
   

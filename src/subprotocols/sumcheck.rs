@@ -588,11 +588,13 @@ impl<F: PrimeField> SumcheckRichProof<F> {
       let round_uni_poly = UniPoly::from_evals(&eval_points);
 
       // append the prover's message to the transcript
-      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
-        &round_uni_poly,
-        b"poly",
-        transcript,
-      );
+      // <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(
+      //   &round_uni_poly,
+      //   b"poly",
+      //   transcript,
+      // );
+      transcript.append_scalars(b"poly", &round_uni_poly.as_vec());
+
       let r_j = transcript.challenge_scalar(b"challenge_nextround");
       r.push(r_j);
 
@@ -661,7 +663,9 @@ impl<F: PrimeField> SumcheckRichProof<F> {
       assert_eq!(poly.eval_at_zero() + poly.eval_at_one(), e);
 
       // append the prover's message to the transcript
-      <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+      
+      // <UniPoly<F> as AppendToTranscript<G>>::append_to_transcript(&poly, b"poly", transcript);
+      transcript.append_scalars(b"poly", &poly.as_vec());
 
       //derive the verifier's challenge for the next round
       let r_i = transcript.challenge_scalar(b"challenge_nextround");
@@ -961,7 +965,7 @@ use ark_ff::Zero;
     let known_poly_evaluator = |x: &[Fr]| known_poly.evaluate(x);
     let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
 
-    let mut p_transcript = Transcript::new(b"test-transcript");
+    let mut p_transcript = TestTranscript::new((0..1001).map(Fr::from).collect(), vec![]);
     // let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
     let (proof, prove_randomness) = VecSumcheckInstanceProof::<Fr>::prove::<_, G1Projective, _>(
       &claims,
@@ -973,7 +977,7 @@ use ark_ff::Zero;
       &mut p_transcript,
     );
 
-    let mut v_transcript = Transcript::new(b"test-transcript");
+    let mut v_transcript = TestTranscript::as_this(&p_transcript);
     // let mut transcript: TestTranscript<Fr> = TestTranscript::as_this(&transcript);
     let verify_result = proof.verify::<G1Projective, _, _>(
       &claims, 
@@ -996,9 +1000,8 @@ use ark_ff::Zero;
 
     let oracle_query: Vec<ark_ff::Fp<ark_ff::MontBackend<ark_curve25519::FrConfig, 4>, 4>> = comb_func_prod(&vec![a, b, c, eq]);
 
-    assert_eq!(
-      <Transcript as ProofTranscript<G1Projective>>::challenge_scalar(&mut p_transcript, b"end"),
-      <Transcript as ProofTranscript<G1Projective>>::challenge_scalar(&mut v_transcript, b"end"),
-    )
+    println!("{:?}", p_transcript.log);
+
+    v_transcript.assert_end();
   }
 }
