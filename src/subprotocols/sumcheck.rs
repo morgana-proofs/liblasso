@@ -498,7 +498,7 @@ impl<F: PrimeField> SumcheckRichProof<F> {
     transcript: &mut T,
   ) -> (Self, Vec<F>)
   where
-    Func: Fn(&Vec<F>) -> F + Sync,
+    Func: Fn(&[F]) -> F + Sync,
     G: CurveGroup<ScalarField = F>,
   {
 
@@ -537,7 +537,7 @@ impl<F: PrimeField> SumcheckRichProof<F> {
 
           // eval 0: bound_func is A(low)
           // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
-          accum[0] += comb_func(&polys.iter().map(|p| p[poly_term_i]).collect());
+          accum[0] += comb_func(&polys.iter().map(|p| p[poly_term_i]).collect_vec());
 
           // TODO(#28): Can be computed from prev_round_claim - eval_point_0
           let eval_at_one: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i]).collect();
@@ -640,7 +640,7 @@ impl<F: PrimeField> SumcheckRichProof<F> {
     transcript: &mut T,
   ) -> Result<(F, Vec<F>), ProofVerifyError>
   where
-    Func: Fn(&Vec<F>) -> F + Sync,
+    Func: Fn(&[F]) -> F + Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let mut e = claim;
@@ -706,7 +706,7 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
 
   #[tracing::instrument(skip_all, name = "VecSumcheck.prove")]
   pub fn prove<Func, G, T: ProofTranscript<G>>(
-    claim: &Vec<F>,
+    claim: &[F],
     num_rounds: usize,
     claimed_polys: &mut Vec<DensePolynomial<F>>,
     known_polys: &mut Vec<DensePolynomial<F>>,
@@ -715,13 +715,13 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
     transcript: &mut T,
   ) -> (Self, Vec<F>)
   where
-    Func: Fn(&Vec<F>) -> Vec<F> + Sync,
+    Func: Fn(&[F]) -> Vec<F> + Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let gamma = transcript.challenge_scalar(b"challenge_combine_outputs");
     let gamma_pows = make_pows(gamma, claim.len());
     let combined_claim = lc(claim, &gamma_pows);
-    let lin_comb_func = |ins: &Vec<F>| {
+    let lin_comb_func = |ins: &[F]| {
       lc(&comb_func(ins), &gamma_pows)
     };
 
@@ -750,13 +750,13 @@ impl<F: PrimeField> VecSumcheckInstanceProof<F> {
     transcript: &mut T,
   ) -> Result<Vec<F>, ProofVerifyError>
   where
-  Func: Fn(&Vec<F>) -> Vec<F> + Sync,
+  Func: Fn(&[F]) -> Vec<F> + Sync,
     G: CurveGroup<ScalarField = F>,
   {
     let gamma = transcript.challenge_scalar(b"challenge_combine_outputs");
     let gamma_pows = make_pows(gamma, claim.len());
     let combined_claim = lc(claim, &gamma_pows);
-    let lin_comb_func = |ins: &Vec<F>| {
+    let lin_comb_func = |ins: &[F]| {
       lc(&comb_func(ins), &gamma_pows)
     };
 
@@ -858,7 +858,7 @@ use ark_ff::Zero;
     let known_poly = EqPolynomial::new(some_point);
 
     let comb_func_prod =
-      |polys: &Vec<Fr>| -> Fr { polys[0] * polys[1] * polys[2] * polys[3] };
+      |polys: &[Fr]| -> Fr { polys[0] * polys[1] * polys[2] * polys[3] };
 
     let mut claim = Fr::zero();
     for i in 0..num_evals {
@@ -934,7 +934,7 @@ use ark_ff::Zero;
     let C: DensePolynomial<Fr> = DensePolynomial::new(evals.clone());
 
     let comb_func_prod =
-      |polys: &Vec<Fr>| -> Vec<Fr> { vec![
+      |polys: &[Fr]| -> Vec<Fr> { vec![
         polys[0] * polys[1],
         polys[1] * polys[2], 
         polys[2] * polys[0], 
