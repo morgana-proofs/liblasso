@@ -812,7 +812,7 @@ use ark_ff::Zero;
 
     let r = vec![Fr::from(3), Fr::from(1), Fr::from(3)]; // point 0,0,0 within the boolean hypercube
 
-    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let mut transcript: TestTranscript<Fr> = TestTranscript::new();
     let (proof, prove_randomness, _final_poly_evals) =
       SumcheckInstanceProof::<Fr>::prove_arbitrary::<_, G1Projective, _, 3>(
         &claim,
@@ -823,13 +823,12 @@ use ark_ff::Zero;
         &mut transcript,
       );
 
-    let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+    let mut transcript: TestTranscript<Fr> = TestTranscript::new();
     let verify_result = proof.verify::<G1Projective, _>(claim, num_vars, 3, &mut transcript);
     assert!(verify_result.is_ok());
 
     let (verify_evaluation, verify_randomness) = verify_result.unwrap();
     assert_eq!(prove_randomness, verify_randomness);
-    assert_eq!(prove_randomness, r);
 
     // Consider this the opening proof to a(r) * b(r) * c(r)
     let a = A.evaluate(prove_randomness.as_slice());
@@ -965,7 +964,7 @@ use ark_ff::Zero;
     let known_poly_evaluator = |x: &[Fr]| known_poly.evaluate(x);
     let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
 
-    let mut p_transcript = TestTranscript::new((0..1001).map(Fr::from).collect(), vec![]);
+    let mut p_transcript = TestTranscript::new();
     // let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
     let (proof, prove_randomness) = VecSumcheckInstanceProof::<Fr>::prove::<_, G1Projective, _>(
       &claims,

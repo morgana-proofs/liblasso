@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, marker::PhantomData};
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -78,27 +78,18 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
   pub struct TestTranscript<F: Debug + Eq> {
     pub label: &'static [u8],
     pub merlin_transcript: Transcript,
-  
-    pub scalars: Vec<F>,
-    pub scalar_index: usize,
-  
-    pub vecs: Vec<Vec<F>>,
-    pub vec_index: usize,
-
     pub log: TranscriptLog,
+    _pd: PhantomData<F>
   }
   
   impl<F: PrimeField> TestTranscript<F> {
-    pub fn new(scalar_responses: Vec<F>, vec_responses: Vec<Vec<F>>) -> Self {
+    pub fn new() -> Self {
       let label = b"transcript";
       Self {
         label,
         merlin_transcript: Transcript::new(label),
-        scalars: scalar_responses,
-        scalar_index: 0,
-        vecs: vec_responses,
-        vec_index: 0,
         log: TranscriptLog::Write(vec![]),
+        _pd: PhantomData,
       }
     }
 
@@ -108,7 +99,7 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
     }
 
     pub fn as_this(other: &Self) -> Self {
-      let Self {label, merlin_transcript, scalars, scalar_index, vecs, vec_index, log} = other;
+      let Self {label, merlin_transcript, log, _pd: _} = other;
 
       let log_records = match log {
         TranscriptLog::Write(data) => data,
@@ -118,11 +109,8 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
       Self {
         label: label,
         merlin_transcript: Transcript::new(label),
-        scalars: scalars.clone(),
-        scalar_index: 0,
-        vecs: vecs.clone(),
-        vec_index: 0,
         log: TranscriptLog::Read(log_records.clone(), 0),
+        _pd: PhantomData,
       }
     }
 
@@ -134,26 +122,13 @@ pub fn gen_random_points<F: PrimeField, const C: usize>(memory_bits: usize) -> [
   
   impl<G: CurveGroup> ProofTranscript<G> for TestTranscript<G::ScalarField> {
     fn challenge_scalar(&mut self, _label: &'static [u8]) -> G::ScalarField {
-      assert!(self.scalar_index < self.scalars.len());
-  
-      let res = self.scalars[self.scalar_index];
-      self.scalar_index += 1;
-
       self.log.append(TranscriptRow::ChallengeScalar(_label));
-      res
+      <Transcript as ProofTranscript<G>>::challenge_scalar(&mut self.merlin_transcript, _label)
     }
   
     fn challenge_vector(&mut self, _label: &'static [u8], len: usize) -> Vec<G::ScalarField> {
-      assert!(self.vec_index < self.vecs.len());
-  
-      let res = self.vecs[self.vec_index].clone();
-  
-      assert_eq!(res.len(), len);
-  
-      self.vec_index += 1;
-
       self.log.append(TranscriptRow::ChallengeVector(_label, len));
-      res
+      <Transcript as ProofTranscript<G>>::challenge_vector(&mut self.merlin_transcript, _label, len)
     }
   
     // The following match impl ProofTranscript for Transcript, but do not affect challenge responses
